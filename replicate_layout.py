@@ -192,21 +192,31 @@ class Replicator:
         with open(filename, encoding='utf-8') as f:
             contents = f.read()
 
-        indexes = []
-        level = []
+        brace_indexes = []
+        quote_indexes = []
+        brace_level = []
         sheet_definitions = []
         new_lines = []
-        lvl = 0
+        brace_lvl = 0
+        in_quote = 0
         # get the nesting levels at index
+        # TODO this will fail if there is a single bracket in a sheetname
         for idx in range(len(contents) - 20):
+            if contents[idx] == "\"":
+                quote_indexes.append(idx)
+                if in_quote:
+                    in_quote = False
+                else:
+                    in_quote = True
+            # TODO might want to ignore braces within quotes (in_quote is True)
             if contents[idx] == "(":
-                lvl = lvl + 1
-                level.append(lvl)
-                indexes.append(idx)
+                brace_lvl = brace_lvl + 1
+                brace_level.append(brace_lvl)
+                brace_indexes.append(idx)
             if contents[idx] == ")":
-                lvl = lvl - 1
-                level.append(lvl)
-                indexes.append(idx)
+                brace_lvl = brace_lvl - 1
+                brace_level.append(brace_lvl)
+                brace_indexes.append(idx)
             if contents[idx] == "\n":
                 new_lines.append(idx)
             a = contents[idx:idx + 20]
@@ -216,7 +226,7 @@ class Replicator:
         start_idx = sheet_definitions
         end_idx = sheet_definitions[1:]
         end_idx.append(len(contents))
-        braces = list(zip(indexes, level))
+        braces = list(zip(brace_indexes, brace_level))
         # parse individual sheet definitions (if any)
         for start, end in zip(start_idx, end_idx):
             def next_bigger(l, v):
@@ -683,29 +693,7 @@ class Replicator:
     def get_sheet_anchor_footprint(self, sheet):
         # get all footprints on this sheet
         sheet_footprints = self.get_footprints_on_sheet(sheet)
-        # get anchor footprint
-        list_of_possible_anchor_footprints = []
-        for fp in sheet_footprints:
-            if fp.fp_id == self.src_anchor_fp.fp_id:
-                list_of_possible_anchor_footprints.append(fp)
-
-        # if there is only one
-        if len(list_of_possible_anchor_footprints) == 1:
-            sheet_anchor_fp = list_of_possible_anchor_footprints[0]
-        # if there are more then one, we're dealing with multiple hierarchy
-        # the correct one is the one who's path is the best match to the sheet path
-        else:
-            list_of_matches = []
-            for fp in list_of_possible_anchor_footprints:
-                index = list_of_possible_anchor_footprints.index(fp)
-                matches = 0
-                for item in self.src_anchor_fp.sheet_id:
-                    if item in fp.sheet_id:
-                        matches = matches + 1
-                list_of_matches.append((index, matches))
-            # select the one with most matches
-            index, _ = max(list_of_matches, key=lambda x: x[1])
-            sheet_anchor_fp = list_of_possible_anchor_footprints[index]
+        sheet_anchor_fp = self.match_fp_in_list(self.src_anchor_fp, sheet_footprints)
         return sheet_anchor_fp
 
     def get_net_pairs(self, sheet):
@@ -840,6 +828,35 @@ class Replicator:
                         good_match_count = good_match_count + match_ratio
                 return good_match_count / len_nets_2
 
+    @staticmethod
+    def match_fp_in_list(footprint, fp_list):
+        # find proper match in source footprints
+        list_of_possible_dst_footprints = []
+        for d_fp in fp_list:
+            if d_fp.fp_id == footprint.fp_id:
+                list_of_possible_dst_footprints.append(d_fp)
+
+        # if there is more than one possible anchor, select the correct one
+        if len(list_of_possible_dst_footprints) == 1:
+            dst_fp = list_of_possible_dst_footprints[0]
+        else:
+            list_of_matches = []
+            for fp in list_of_possible_dst_footprints:
+                index = list_of_possible_dst_footprints.index(fp)
+                matches = 0
+                for item in footprint.sheet_id:
+                    if item in fp.sheet_id:
+                        matches = matches + 1
+                list_of_matches.append((index, matches))
+            # check if list is empty, if it is, then it is highly likely that schematics and pcb are not in sync
+            if not list_of_matches:
+                raise LookupError("Can not find destination footprint for source footprint: " + repr(src_fp.ref)
+                                  + "\n" + "Most likely, schematics and PCB are not in sync")
+            # select the one with most matches
+            index, _ = max(list_of_matches, key=lambda item: item[1])
+            dst_fp = list_of_possible_dst_footprints[index]
+        return dst_fp
+
     def replicate_footprints(self, settings):
         logger.info("Replicating footprints")
         nr_sheets = len(self.dst_sheets)
@@ -870,30 +887,7 @@ class Replicator:
                 self.update_progress(self.stage, progress, None)
 
                 # find proper match in source footprints
-                list_of_possible_dst_footprints = []
-                for d_fp in dst_footprints:
-                    if d_fp.fp_id == src_fp.fp_id:
-                        list_of_possible_dst_footprints.append(d_fp)
-
-                # if there is more than one possible anchor, select the correct one
-                if len(list_of_possible_dst_footprints) == 1:
-                    dst_fp = list_of_possible_dst_footprints[0]
-                else:
-                    list_of_matches = []
-                    for fp in list_of_possible_dst_footprints:
-                        index = list_of_possible_dst_footprints.index(fp)
-                        matches = 0
-                        for item in src_fp.sheet_id:
-                            if item in fp.sheet_id:
-                                matches = matches + 1
-                        list_of_matches.append((index, matches))
-                    # check if list is empty, if it is, then it is highly likely that schematics and pcb are not in sync
-                    if not list_of_matches:
-                        raise LookupError("Can not find destination footprint for source footprint: " + repr(src_fp.ref)
-                                          + "\n" + "Most likely, schematics and PCB are not in sync")
-                    # select the one with most matches
-                    index, _ = max(list_of_matches, key=lambda item: item[1])
-                    dst_fp = list_of_possible_dst_footprints[index]
+                dst_fp = self.match_fp_in_list(src_fp, dst_footprints)
 
                 # skip locked footprints
                 if dst_fp.fp.IsLocked() is True and self.replicate_locked_footprints is False:
@@ -960,8 +954,15 @@ class Replicator:
                 # replicate also text layout - also for anchor footprint. I am counting that the user is lazy and will
                 # just position the destination anchors and will not edit them
                 # get footprint text
-                src_fp_text_items = self.get_footprint_text_items(src_fp)
-                dst_fp_text_items = self.get_footprint_text_items(dst_fp)
+                src_text_items = self.get_footprint_text_items(src_fp)
+                dst_text_items = self.get_footprint_text_items(dst_fp)
+
+                # sort text items, as by default the order is random
+                src_fp_text_items = sorted(src_text_items,
+                                                  key=lambda element: (element.GetLayer(), element.GetText()))
+                dst_fp_text_items = sorted(dst_text_items,
+                                                  key=lambda element: (element.GetLayer(), element.GetText()))
+
                 # check if both footprints (source and the one for replication) have the same number of text items
                 if len(src_fp_text_items) != len(dst_fp_text_items):
                     raise LookupError(
@@ -980,6 +981,9 @@ class Replicator:
                     src_txt_orientation = src_text.GetTextAngleDegrees()
                     delta_angle = dst_fp_orientation - src_fp_orientation
                     dst_text = dst_fp_text_items[txt_index]
+
+                    logger.info("Src text UUid:" + src_text.m_Uuid.AsString())
+                    logger.info("Dst text UUid:" + dst_text.m_Uuid.AsString())
 
                     dst_text.SetLayer(src_text.GetLayer())
                     # set text parameters

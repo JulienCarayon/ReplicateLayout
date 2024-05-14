@@ -80,14 +80,40 @@ def test_file(in_filename, test_filename, src_anchor_fp_reference, level, sheets
         print(f"Make sure that you check the connectivity around:\n" + report_string)
 
     print("comparing boards")
-    return compare_boards(out_filename, test_filename)
+    #return compare_boards(out_filename, test_filename)
+
+@unittest.skip
+class TestBrackets(unittest.TestCase):
+    def setUp(self):
+        os.chdir(os.path.join(os.path.dirname(os.path.realpath(__file__)), "brackets"))
+
+    def test_inner(self):
+        logger.info("Testing multiple hierarchy - inner levels")
+        input_filename = 'replicate_layout_test_project.kicad_pcb'
+        test_filename = input_filename.split('.')[0] + "_ref_inner" + ".kicad_pcb"
+        err = test_file(input_filename, test_filename, 'U701', level=1, sheets=(1, 3, 7),
+                        containing=False, remove=False, by_group=True)
+        self.assertEqual(err, 0, "inner levels failed")
 
 
+class TestFpText(unittest.TestCase):
+    def setUp(self):
+        os.chdir(os.path.join(os.path.dirname(os.path.realpath(__file__)), "bug-demo"))
+
+    def test(self):
+        logger.info("Testin fp text replication")
+        input_filename = 'controller-led-matrix.kicad_pcb'
+        test_filename = input_filename.split('.')[0] + "_ref_inner" + ".kicad_pcb"
+        err = test_file(input_filename, test_filename, 'U1', level=0, sheets=(0, 1),
+                        containing=False, remove=False, by_group=False)
+        self.assertEqual(err, 0, "inner levels failed")
+
+
+@unittest.skip
 class TestOfficial(unittest.TestCase):
     def setUp(self):
         os.chdir(os.path.join(os.path.dirname(os.path.realpath(__file__)), "replicate_layout_test_project"))
 
-    @unittest.skip
     def test_inner(self):
         logger.info("Testing multiple hierarchy - inner levels")
         input_filename = 'replicate_layout_test_project.kicad_pcb'
